@@ -12,6 +12,8 @@ import github.luthfipun.ck_downloader_core.service.CkDownloadService.Companion.P
 import github.luthfipun.ck_downloader_core.util.CkDownloadAction.ACTION_QUEUE
 import github.luthfipun.ck_downloader_core.util.CkDownloadAction.ACTION_STOP
 import github.luthfipun.ck_downloader_core.util.CkDownloadState
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import java.io.File
 
 class CkDownloadManager(
@@ -79,16 +81,16 @@ class CkDownloadManager(
 	}
 
 	@Throws(Exception::class)
-	suspend fun getProgress() = dao?.getProgress()
+	suspend fun getProgress() = dao?.getProgress() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
-	suspend fun getAllDownloads() = dao?.getAllDownloads()
+	suspend fun getAllDownloads() = dao?.getAllDownloads() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
-	fun getProgressFlow() = dao?.getProgressFlow()
+	fun getProgressFlow() = dao?.getProgressFlow() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
-	fun getTotalProgress() = dao?.getTotalProgress()
+	fun getTotalProgress() = dao?.getTotalProgress() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
 	suspend fun updateState(uniqueId: String, state: CkDownloadState) {
