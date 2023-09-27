@@ -13,6 +13,8 @@ import github.luthfipun.ck_downloader_core.util.CkDownloadState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -66,11 +68,14 @@ abstract class CkDownloadService : Service() {
 					if (progress == null) {
 						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
 							stopForeground(STOP_FOREGROUND_REMOVE)
+						} else {
+							stopForeground(true)
 						}
 						stopSelf()
+						return@collect
 					}
 					withContext(Dispatchers.Main) {
-						notificationBuilder?.setProgress(100, progress ?: 0, false)
+						notificationBuilder?.setProgress(100, progress, false)
 						notificationBuilder?.setContentText("$progress% Complete")
 						notificationBuilder?.build()
 							?.let { notificationManager?.notify(NOTIFICATION_ID, it) }
@@ -94,7 +99,7 @@ abstract class CkDownloadService : Service() {
 		}
 
 		if (CkDownloadAction.valueOf(state) == CkDownloadAction.ACTION_STOP) {
-			CoroutineScope(Dispatchers.IO).launch { onStop(uniqueId, filePath) }
+			jobDownloads[uniqueId]?.cancel("STOP_JOB")
 			return START_NOT_STICKY
 		}
 
@@ -102,6 +107,16 @@ abstract class CkDownloadService : Service() {
 			CoroutineScope(Dispatchers.IO).launch { onError(uniqueId) }
 			return START_NOT_STICKY
 		}
+
+		try {
+			if (File(filePath).exists()) {
+				File(filePath).delete()
+			}
+		} catch (e: Exception) {
+			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
+		}
+
+		val outputFile = File(filePath)
 
 		jobDownloads[uniqueId] = CoroutineScope(Dispatchers.IO).launch {
 			try {
@@ -112,7 +127,7 @@ abstract class CkDownloadService : Service() {
 				var startByte = 0L
 				var endByte = chunkSize - 1L
 
-				while (startByte < contentLength) {
+				while (startByte < contentLength && isActive) {
 					val rangeHeader = "bytes=$startByte-$endByte"
 					requestBuilder.header("Range", rangeHeader)
 
@@ -126,7 +141,7 @@ abstract class CkDownloadService : Service() {
 					val responseBody = response.body
 
 					responseBody?.let { body ->
-						saveChunkToFile(body.byteStream(), File(filePath))
+						saveChunkToFile(body.byteStream(), outputFile)
 						startByte = endByte + 1L
 						endByte += chunkSize
 
@@ -142,43 +157,38 @@ abstract class CkDownloadService : Service() {
 						}
 					}
 				}
+
+				onSuccess(uniqueId)
 			} catch (e: IOException) {
 				Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
-				onError(uniqueId)
-			} finally {
-				onSuccess(uniqueId)
+				if (e.message == "STOP_JOB") {
+					if (File(filePath).exists()) {
+						File(filePath).delete()
+					}
+				} else {
+					onError(uniqueId)
+				}
 			}
 		}
 
 		return START_NOT_STICKY
 	}
 
-	private suspend fun onStop(uniqueId: String, filePath: String) {
-		jobDownloads[uniqueId]?.cancel()
+	private suspend fun onError(uniqueId: String) {
 		try {
-			manager?.deleteDownload(uniqueId).also {
-				File(filePath).also {
-					if (it.exists()) it.delete()
-				}
+			manager?.updateState(uniqueId, CkDownloadState.STATE_ERROR).also {
+				jobDownloads[uniqueId]?.cancel()
 			}
 		} catch (e: Exception) {
 			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
 		}
 	}
 
-	private suspend fun onError(uniqueId: String) {
-		jobDownloads[uniqueId]?.cancel()
-		try {
-			manager?.updateState(uniqueId, CkDownloadState.STATE_ERROR)
-		} catch (e: Exception) {
-			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
-		}
-	}
-
 	private suspend fun onSuccess(uniqueId: String) {
-		jobDownloads[uniqueId]?.cancel()
 		try {
-			manager?.updateState(uniqueId, CkDownloadState.STATE_DONE)
+			manager?.updateState(uniqueId, CkDownloadState.STATE_DONE).also {
+				jobDownloads[uniqueId]?.cancel()
+			}
 		} catch (e: Exception) {
 			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
 		}
@@ -220,7 +230,7 @@ abstract class CkDownloadService : Service() {
 
 	override fun onDestroy() {
 		super.onDestroy()
-		jobDownloads.forEach { (_, j) -> j.cancel() }
+		jobDownloads.values.forEach { it.cancel() }
 		jobDownloads.clear()
 	}
 }

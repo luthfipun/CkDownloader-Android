@@ -97,6 +97,8 @@ fun HomeScreen(
 				confirmButton = {
 					Button(onClick = {
 						selectedDelete.value?.let { onDelete(it) }
+						selectedDelete.value = null
+						dialogDelete.value = false
 					}) {
 						Text(text = "Yes, Delete")
 					}

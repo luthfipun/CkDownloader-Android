@@ -11,8 +11,6 @@ import github.luthfipun.ckdownloader.service.MyDownloadService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -32,8 +30,9 @@ class HomeViewModel @Inject constructor(
 	}
 
 	init {
+		observeProgressFlow()
+		observeStateFlow()
 		refreshData()
-		observerProgressFlow()
 	}
 
 	private fun refreshData() {
@@ -48,18 +47,35 @@ class HomeViewModel @Inject constructor(
 		}
 	}
 
-	private fun observerProgressFlow() {
+	private fun observeStateFlow() {
+		viewModelScope.launch(Dispatchers.IO) {
+			try {
+				manager.getStateFlow().collect { stateEntities ->
+					val updateState = state.value.map { value ->
+						stateEntities.firstOrNull { it.uniqueId == value.uniqueId }?.let {
+							value.copy(state = it.state)
+						} ?: value
+					}
+					_state.update { updateState }
+				}
+			} catch (e: Exception) {
+				Log.e(HomeViewModel::class.java.name, e.message.orEmpty())
+			}
+		}
+	}
+
+	private fun observeProgressFlow() {
 		viewModelScope.launch(Dispatchers.IO) {
 			try {
 				manager.getProgressFlow()
-					.onEach { progressEntities ->
+					.collect { progressEntities ->
 						val updateState = state.value.map { value ->
 							progressEntities.firstOrNull { it.uniqueId == value.uniqueId }?.let {
 								value.copy(progress = it.progress)
 							} ?: value
 						}
 						_state.update { updateState }
-					}.launchIn(viewModelScope)
+					}
 			} catch (e: Exception) {
 				Log.e(HomeViewModel::class.java.name, e.message.orEmpty())
 			}

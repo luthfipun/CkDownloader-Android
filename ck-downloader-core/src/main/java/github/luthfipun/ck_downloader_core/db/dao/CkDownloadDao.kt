@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import github.luthfipun.ck_downloader_core.core.CkDownloadModelProgress
+import github.luthfipun.ck_downloader_core.core.CkDownloadModelState
 import github.luthfipun.ck_downloader_core.db.entity.CkDownloadEntity
 import github.luthfipun.ck_downloader_core.util.CkDownloadState
 import kotlinx.coroutines.flow.Flow
@@ -43,4 +44,7 @@ interface CkDownloadDao {
 
 	@Query("SELECT unique_id as uniqueId, progress FROM ck_download WHERE state = :state")
 	fun getProgressFlow(state: String = CkDownloadState.STATE_DOWNLOADING.name): Flow<List<CkDownloadModelProgress>>
+
+	@Query("SELECT unique_id as uniqueId, state FROM ck_download")
+	fun getStateFlow(): Flow<List<CkDownloadModelState>>
 }

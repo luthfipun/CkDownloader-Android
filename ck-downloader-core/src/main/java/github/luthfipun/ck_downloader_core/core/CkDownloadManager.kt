@@ -12,8 +12,6 @@ import github.luthfipun.ck_downloader_core.service.CkDownloadService.Companion.P
 import github.luthfipun.ck_downloader_core.util.CkDownloadAction.ACTION_QUEUE
 import github.luthfipun.ck_downloader_core.util.CkDownloadAction.ACTION_STOP
 import github.luthfipun.ck_downloader_core.util.CkDownloadState
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import java.io.File
 
 class CkDownloadManager(
@@ -31,6 +29,10 @@ class CkDownloadManager(
 	) {
 		try {
 			val userPath = request.path?.path ?: defaultPath
+			if (File(userPath).exists().not()) {
+				File(userPath).mkdir()
+			}
+
 			val fileExtension = if (request.extension != null) ".${request.extension}" else ""
 			val filePath = File(userPath, request.fileName + fileExtension)
 
@@ -45,7 +47,7 @@ class CkDownloadManager(
 			if (! checkUniqueId(entity.uniqueId)) {
 				insertOnce(entity).also {
 					val intent = Intent(context, clazz).apply {
-						putExtra(PARAM_STATE, ACTION_QUEUE)
+						putExtra(PARAM_STATE, ACTION_QUEUE.name)
 						putExtra(PARAM_ID, entity.uniqueId)
 						putExtra(PARAM_PATH, entity.filePath)
 						putExtra(PARAM_URL, entity.url)
@@ -69,11 +71,16 @@ class CkDownloadManager(
 		try {
 			getByUniqueId(uniqueId)?.let {
 				val intent = Intent(context, clazz).apply {
-					putExtra(PARAM_STATE, ACTION_STOP)
+					putExtra(PARAM_STATE, ACTION_STOP.name)
 					putExtra(PARAM_ID, it.uniqueId)
 					putExtra(PARAM_PATH, it.filePath)
 				}
 				context.startService(intent)
+
+				deleteDownload(uniqueId)
+				if (File(it.filePath).exists()) {
+					File(it.filePath).delete()
+				}
 			}
 		} catch (e: Exception) {
 			throw e
@@ -81,16 +88,23 @@ class CkDownloadManager(
 	}
 
 	@Throws(Exception::class)
-	suspend fun getProgress() = dao?.getProgress() ?: throw Exception("CkDownload manager not initialize")
+	suspend fun getProgress() =
+		dao?.getProgress() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
-	suspend fun getAllDownloads() = dao?.getAllDownloads() ?: throw Exception("CkDownload manager not initialize")
+	suspend fun getAllDownloads() =
+		dao?.getAllDownloads() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
-	fun getProgressFlow() = dao?.getProgressFlow() ?: throw Exception("CkDownload manager not initialize")
+	fun getProgressFlow() =
+		dao?.getProgressFlow() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
-	fun getTotalProgress() = dao?.getTotalProgress() ?: throw Exception("CkDownload manager not initialize")
+	fun getStateFlow() = dao?.getStateFlow() ?: throw Exception("CkDownload manager not initialize")
+
+	@Throws(Exception::class)
+	fun getTotalProgress() =
+		dao?.getTotalProgress() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
 	suspend fun updateState(uniqueId: String, state: CkDownloadState) {

@@ -38,7 +38,7 @@ object CkDownloaderModule {
 	@Provides
 	fun provideHttpLoggingInterceptor(): HttpLoggingInterceptor {
 		return HttpLoggingInterceptor().setLevel(
-			HttpLoggingInterceptor.Level.BODY
+			HttpLoggingInterceptor.Level.NONE
 		)
 	}
 
