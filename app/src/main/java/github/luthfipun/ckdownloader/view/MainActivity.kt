@@ -1,4 +1,4 @@
-package github.luthfipun.ckdownloader
+package github.luthfipun.ckdownloader.view
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
