@@ -92,8 +92,8 @@ class CkDownloadManager(
 		dao?.getProgress() ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
-	suspend fun getAllDownloads() =
-		dao?.getAllDownloads() ?: throw Exception("CkDownload manager not initialize")
+	suspend fun getAllDownloads(isASC: Boolean = true) =
+		dao?.getAllDownloads(isASC) ?: throw Exception("CkDownload manager not initialize")
 
 	@Throws(Exception::class)
 	fun getProgressFlow() =

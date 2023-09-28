@@ -25,8 +25,8 @@ class HomeViewModel @Inject constructor(
 
 	companion object {
 		private const val SAMPLE_URL =
-			"http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-		private const val SAMPLE_CONTENT_LENGTH: Long = 158008374
+			"http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4"
+		private const val SAMPLE_CONTENT_LENGTH: Long = 48051822
 	}
 
 	init {
@@ -38,7 +38,7 @@ class HomeViewModel @Inject constructor(
 	private fun refreshData() {
 		viewModelScope.launch(Dispatchers.IO) {
 			try {
-				manager.getAllDownloads().also {
+				manager.getAllDownloads(isASC = false).also {
 					_state.value = it
 				}
 			} catch (e: Exception) {

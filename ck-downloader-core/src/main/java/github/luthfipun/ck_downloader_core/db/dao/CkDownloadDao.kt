@@ -36,8 +36,8 @@ interface CkDownloadDao {
 	@Query("SELECT SUM(progress)/COUNT(*) FROM ck_download WHERE state = :state")
 	fun getTotalProgress(state: String = CkDownloadState.STATE_DOWNLOADING.name): Flow<Int?>
 
-	@Query("SELECT * FROM ck_download ORDER BY created_at ASC")
-	suspend fun getAllDownloads(): List<CkDownloadEntity>
+	@Query("SELECT * FROM ck_download ORDER BY CASE WHEN :isAsc = 1 THEN created_at END ASC, CASE WHEN :isAsc = 0 THEN created_at END DESC")
+	suspend fun getAllDownloads(isAsc: Boolean = true): List<CkDownloadEntity>
 
 	@Query("SELECT unique_id as uniqueId, progress FROM ck_download WHERE state = :state")
 	suspend fun getProgress(state: String = CkDownloadState.STATE_DOWNLOADING.name): List<CkDownloadModelProgress>
