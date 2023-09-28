@@ -94,7 +94,17 @@ abstract class CkDownloadService : Service() {
 		val url = intent?.getStringExtra(PARAM_URL).orEmpty()
 		val contentLength = intent?.getLongExtra(PARAM_LENGTH, 0L) ?: 0L
 
-		if (state.isEmpty() || uniqueId.isEmpty() || filePath.isEmpty()) {
+		if (state.isEmpty()) {
+			return START_NOT_STICKY
+		}
+
+		if (CkDownloadAction.valueOf(state) == CkDownloadAction.ACTION_STOP_ALL) {
+			jobDownloads.values.forEach { it.cancel() }
+			jobDownloads.clear()
+			return START_NOT_STICKY
+		}
+
+		if (uniqueId.isEmpty() || filePath.isEmpty()) {
 			return START_NOT_STICKY
 		}
 

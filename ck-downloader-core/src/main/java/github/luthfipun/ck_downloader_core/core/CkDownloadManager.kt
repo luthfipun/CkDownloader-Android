@@ -11,6 +11,7 @@ import github.luthfipun.ck_downloader_core.service.CkDownloadService.Companion.P
 import github.luthfipun.ck_downloader_core.service.CkDownloadService.Companion.PARAM_URL
 import github.luthfipun.ck_downloader_core.util.CkDownloadAction.ACTION_QUEUE
 import github.luthfipun.ck_downloader_core.util.CkDownloadAction.ACTION_STOP
+import github.luthfipun.ck_downloader_core.util.CkDownloadAction.ACTION_STOP_ALL
 import github.luthfipun.ck_downloader_core.util.CkDownloadState
 import java.io.File
 
@@ -102,6 +103,26 @@ class CkDownloadManager(
 	}
 
 	@Throws(Exception::class)
+	suspend fun sendStopRemoveAllDownloads(
+		clazz: Class<out CkDownloadService>?
+	) {
+		try {
+			val intent = Intent(context, clazz).apply {
+				putExtra(PARAM_STATE, ACTION_STOP_ALL.name)
+			}
+			context.startService(intent)
+			getAllDownloads().forEach {
+				if (File(it.filePath).exists()) {
+					File(it.filePath).delete()
+				}
+			}
+			clean()
+		} catch (e: Exception) {
+			throw e
+		}
+	}
+
+	@Throws(Exception::class)
 	suspend fun getProgress() =
 		dao?.getProgress() ?: throw Exception("CkDownload manager not initialize")
 
@@ -139,7 +160,7 @@ class CkDownloadManager(
 	}
 
 	@Throws(Exception::class)
-	suspend fun clean() {
+	private suspend fun clean() {
 		try {
 			dao?.clean()
 		} catch (e: Exception) {
@@ -148,7 +169,7 @@ class CkDownloadManager(
 	}
 
 	@Throws(Exception::class)
-	suspend fun deleteDownload(uniqueId: String) {
+	private suspend fun deleteDownload(uniqueId: String) {
 		try {
 			dao?.deleteByUniqueId(uniqueId)
 		} catch (e: Exception) {
