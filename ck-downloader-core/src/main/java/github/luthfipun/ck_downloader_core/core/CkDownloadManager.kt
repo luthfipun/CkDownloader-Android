@@ -44,7 +44,8 @@ class CkDownloadManager(
 				progress = 0,
 				state = CkDownloadState.STATE_DOWNLOADING.name
 			)
-			if (! checkUniqueId(entity.uniqueId)) {
+			val existEntity = getByUniqueId(entity.uniqueId)
+			if (existEntity == null) {
 				insertOnce(entity).also {
 					val intent = Intent(context, clazz).apply {
 						putExtra(PARAM_STATE, ACTION_QUEUE.name)
@@ -56,7 +57,20 @@ class CkDownloadManager(
 					context.startService(intent)
 				}
 			} else {
-				throw Exception("Download file is already!")
+				if (CkDownloadState.valueOf(existEntity.state) != CkDownloadState.STATE_ERROR) {
+					return
+				}
+
+				updateState(existEntity.uniqueId, CkDownloadState.STATE_DOWNLOADING)
+
+				val intent = Intent(context, clazz).apply {
+					putExtra(PARAM_STATE, ACTION_QUEUE.name)
+					putExtra(PARAM_ID, existEntity.uniqueId)
+					putExtra(PARAM_PATH, existEntity.filePath)
+					putExtra(PARAM_URL, existEntity.url)
+					putExtra(PARAM_LENGTH, existEntity.contentLength)
+				}
+				context.startService(intent)
 			}
 		} catch (e: Exception) {
 			throw e
