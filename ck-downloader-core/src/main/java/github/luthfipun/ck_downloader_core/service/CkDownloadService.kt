@@ -2,6 +2,7 @@ package github.luthfipun.ck_downloader_core.service
 
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -53,7 +54,13 @@ abstract class CkDownloadService : Service() {
 		val (builder, managerCompat) = buildNotification()
 		notificationBuilder = builder
 		notificationManager = managerCompat
-		startForeground(NOTIFICATION_ID, notificationBuilder?.build())
+		notificationBuilder?.build()?.let {
+			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+				startForeground(NOTIFICATION_ID, it, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+			} else {
+				startForeground(NOTIFICATION_ID, it)
+			}
+		}
 		observeProgressFlow(manager, notificationManager, notificationBuilder)
 	}
 
