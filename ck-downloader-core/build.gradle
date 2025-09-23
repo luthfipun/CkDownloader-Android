@@ -86,7 +86,7 @@ afterEvaluate {
                 from components.release
                 groupId = 'github.luthfipun'
                 artifactId = 'ck_downloader_core'
-                version = '0.2'
+                version = '0.3'
             }
         }
     }
