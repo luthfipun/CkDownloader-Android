@@ -1,11 +1,14 @@
 package github.luthfipun.ck_downloader_core.service
 
+import android.Manifest
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import github.luthfipun.ck_downloader_core.core.CkDownloadManager
@@ -76,6 +79,7 @@ abstract class CkDownloadService : Service() {
 						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
 							stopForeground(STOP_FOREGROUND_REMOVE)
 						} else {
+							@Suppress("DEPRECATION")
 							stopForeground(true)
 						}
 						stopSelf()
@@ -84,8 +88,15 @@ abstract class CkDownloadService : Service() {
 					withContext(Dispatchers.Main) {
 						notificationBuilder?.setProgress(100, progress, false)
 						notificationBuilder?.setContentText("$progress% Complete")
-						notificationBuilder?.build()
-							?.let { notificationManager?.notify(NOTIFICATION_ID, it) }
+						notificationBuilder?.build()?.let {
+							if (ActivityCompat.checkSelfPermission(
+                                    application.applicationContext,
+                                    Manifest.permission.POST_NOTIFICATIONS
+                                ) == PackageManager.PERMISSION_GRANTED
+                            ) {
+								notificationManager?.notify(NOTIFICATION_ID, it)
+							}
+						}
 					}
 				}
 			} catch (e: Exception) {

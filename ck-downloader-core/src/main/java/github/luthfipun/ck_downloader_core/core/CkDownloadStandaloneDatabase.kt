@@ -7,13 +7,13 @@ import github.luthfipun.ck_downloader_core.db.CkDownloadDatabase
 import javax.inject.Inject
 
 class CkDownloadStandaloneDatabase @Inject constructor(
-	@ApplicationContext private val context: Context
+	@param:ApplicationContext private val context: Context
 ) {
 	var db: CkDownloadDatabase? = null
 	fun build(): CkDownloadStandaloneDatabase {
 		db = Room.databaseBuilder(
-			context, CkDownloadDatabase::class.java, "ck_downloader_db"
-		).fallbackToDestructiveMigration()
+				context, CkDownloadDatabase::class.java, "ck_downloader_db"
+			).fallbackToDestructiveMigration(false)
 			.build()
 		return this
 	}
