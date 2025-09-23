@@ -131,7 +131,7 @@ abstract class CkDownloadService : Service() {
 			return START_NOT_STICKY
 		}
 
-		if (url.isEmpty() || contentLength == 0L) {
+		if (url.isEmpty()) {
 			CoroutineScope(Dispatchers.IO).launch { onError(uniqueId) }
 			return START_NOT_STICKY
 		}
@@ -146,29 +146,110 @@ abstract class CkDownloadService : Service() {
 
 		val outputFile = File(filePath)
 
+		if (contentLength > 0) {
+			jobDownloadWithContentLength(
+				uniqueId = uniqueId,
+				filePath = filePath,
+				url = url,
+				contentLength = contentLength,
+				outputFile = outputFile
+			)
+		}else {
+			jobDownloadWithoutContentLength(
+				uniqueId = uniqueId,
+				filePath = filePath,
+				url = url,
+				outputFile = outputFile
+			)
+		}
+
+		return START_NOT_STICKY
+	}
+
+	private fun jobDownloadWithoutContentLength(
+		uniqueId: String,
+		filePath: String,
+		url: String,
+		outputFile: File
+	) {
 		jobDownloads[uniqueId] = CoroutineScope(Dispatchers.IO).launch {
 			try {
 				val client = okhttp ?: throw Exception("Please implement okhttp client!")
-				val requestBuilder = Request.Builder().url(url)
+				val chunkSize = downloadMaxChunkLength(30_000_000)
+				var pos = outputFile.length()
+				var done = false
 
+				while (!done && isActive) {
+					val end = pos + chunkSize - 1L
+					val rangeVal = "bytes=$pos-$end"
+					val resp = requestRange(client, url, rangeVal)
+
+					resp?.use { r ->
+						val body = r.body
+						when (r.code) {
+							206 -> {
+								if (body != null) {
+									saveChunkToFile(body.byteStream(), outputFile)
+									if (body.contentLength() < chunkSize) done = true
+									pos += body.contentLength()
+									try {
+										manager?.updateProgress(uniqueId, (pos.div(1000_000).toDouble().toInt()))
+									} catch (e: Exception) {
+										Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
+									}
+								}else {
+									done = true
+								}
+							}
+							200 -> {
+								if (body != null) {
+									saveChunkToFile(body.byteStream(), outputFile)
+								}else {
+									done = true
+								}
+							}
+							else -> {
+								done = true
+								if (File(filePath).exists()) {
+									File(filePath).delete()
+								}
+								onError(uniqueId)
+							}
+						}
+					}
+				}
+
+				onSuccess(uniqueId)
+			} catch (e: IOException) {
+				Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
+				if (e.message == "STOP_JOB") {
+					if (File(filePath).exists()) {
+						File(filePath).delete()
+					}
+				} else {
+					onError(uniqueId)
+				}
+			}
+		}
+	}
+
+	private fun jobDownloadWithContentLength(
+		uniqueId: String,
+		filePath: String,
+		url: String,
+		contentLength: Long,
+		outputFile: File
+	) {
+		jobDownloads[uniqueId] = CoroutineScope(Dispatchers.IO).launch {
+			try {
+				val client = okhttp ?: throw Exception("Please implement okhttp client!")
 				val chunkSize = downloadMaxChunkLength(contentLength)
 				var startByte = 0L
 				var endByte = chunkSize - 1L
 
 				while (startByte < contentLength && isActive) {
-					val rangeHeader = "bytes=$startByte-$endByte"
-					requestBuilder.header("Range", rangeHeader)
-
-					val request = requestBuilder.build()
-					val response: Response = client.newCall(request).execute()
-
-					if (! response.isSuccessful) {
-						return@launch
-					}
-
-					val responseBody = response.body
-
-					responseBody?.let { body ->
+					val response = requestRange(client, url, "bytes=$startByte-$endByte")
+					response?.body?.let { body ->
 						saveChunkToFile(body.byteStream(), outputFile)
 						startByte = endByte + 1L
 						endByte += chunkSize
@@ -198,8 +279,14 @@ abstract class CkDownloadService : Service() {
 				}
 			}
 		}
+	}
 
-		return START_NOT_STICKY
+	private fun requestRange(okhttp: OkHttpClient, url: String, range: String): Response? {
+		val req = Request.Builder()
+			.url(url)
+			.header("Range", range)
+			.build()
+		return okhttp.newCall(req).execute()
 	}
 
 	private suspend fun onError(uniqueId: String) {

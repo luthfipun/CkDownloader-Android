@@ -169,11 +169,15 @@ fun DownloadItemView(
 			) {
 				Text(text = entity.uniqueId)
 				if (CkDownloadState.valueOf(state.value) == CkDownloadState.STATE_DOWNLOADING) {
-					LinearProgressIndicator(
-						progress = progress.value.toFloat().div(100f),
-						modifier = Modifier.fillMaxWidth(),
-						trackColor = ProgressIndicatorDefaults.linearColor.copy(0.3f)
-					)
+					if (entity.contentLength > 0) {
+						LinearProgressIndicator(
+							progress = progress.value.toFloat().div(100f),
+							modifier = Modifier.fillMaxWidth(),
+							trackColor = ProgressIndicatorDefaults.linearColor.copy(0.3f)
+						)
+					}else {
+						LinearProgressIndicator()
+					}
 				}
 				Row(
 					modifier = Modifier.fillMaxWidth(),
@@ -188,7 +192,7 @@ fun DownloadItemView(
 						}
 					)
 					if (CkDownloadState.valueOf(state.value) == CkDownloadState.STATE_DOWNLOADING) {
-						Text(text = "${progress.value}%")
+						Text(text = if (entity.contentLength > 0) "${progress.value}%" else "${progress.value}MB")
 					}
 				}
 			}

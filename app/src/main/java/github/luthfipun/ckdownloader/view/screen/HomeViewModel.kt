@@ -24,9 +24,10 @@ class HomeViewModel @Inject constructor(
 	val state = _state.asStateFlow()
 
 	companion object {
-		private const val SAMPLE_URL =
-			"http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4"
-		private const val SAMPLE_CONTENT_LENGTH: Long = 48051822
+//		private const val SAMPLE_URL = "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4"
+//		private const val SAMPLE_CONTENT_LENGTH: Long = 48051822
+		private const val SAMPLE_URL = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_30MB.mp4"
+		private const val SAMPLE_CONTENT_LENGTH: Long = 0
 	}
 
 	init {
