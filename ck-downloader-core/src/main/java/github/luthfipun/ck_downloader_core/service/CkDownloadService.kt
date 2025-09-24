@@ -219,7 +219,7 @@ abstract class CkDownloadService : Service() {
 					}
 				}
 
-				onSuccess(uniqueId)
+				if (File(filePath).exists()) onSuccess(uniqueId)
 			} catch (e: IOException) {
 				Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
 				if (e.message == "STOP_JOB") {
@@ -246,28 +246,52 @@ abstract class CkDownloadService : Service() {
 				val chunkSize = downloadMaxChunkLength(contentLength)
 				var startByte = 0L
 				var endByte = chunkSize - 1L
+				var done = false
 
-				while (startByte < contentLength && isActive) {
+				while (startByte < contentLength && isActive && !done) {
 					val response = requestRange(client, url, "bytes=$startByte-$endByte")
-					response?.body?.let { body ->
-						saveChunkToFile(body.byteStream(), outputFile)
-						startByte = endByte + 1L
-						endByte += chunkSize
+					response?.use { r ->
+						val body = r.body
+						when(r.code) {
+							206 -> {
+								if (body != null) {
+									saveChunkToFile(body.byteStream(), outputFile)
+									startByte = endByte + 1L
+									endByte += chunkSize
 
-						if (endByte >= contentLength) {
-							endByte = contentLength - 1
-						}
+									if (endByte >= contentLength) {
+										endByte = contentLength - 1
+									}
 
-						val progress = (endByte.times(100)).div(contentLength).toInt()
-						try {
-							manager?.updateProgress(uniqueId, progress)
-						} catch (e: Exception) {
-							Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
+									val progress = (endByte.times(100)).div(contentLength).toInt()
+									try {
+										manager?.updateProgress(uniqueId, progress)
+									} catch (e: Exception) {
+										Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
+									}
+								} else {
+									done = true
+								}
+							}
+							200 -> {
+								if (body != null) {
+									saveChunkToFile(body.byteStream(), outputFile)
+								} else {
+									done = true
+								}
+							}
+							else -> {
+								done = true
+								if (File(filePath).exists()) {
+									File(filePath).delete()
+								}
+								onError(uniqueId)
+							}
 						}
 					}
 				}
 
-				onSuccess(uniqueId)
+				if (File(filePath).exists()) onSuccess(uniqueId)
 			} catch (e: IOException) {
 				Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
 				if (e.message == "STOP_JOB") {

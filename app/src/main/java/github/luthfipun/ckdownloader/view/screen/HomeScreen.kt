@@ -38,11 +38,15 @@ import github.luthfipun.ckdownloader.R
 @Composable
 fun HomeScreen(
 	entities: List<CkDownloadEntity>,
-	onDownload: () -> Unit,
+	onDownload: (Boolean) -> Unit,
 	onDelete: (CkDownloadEntity) -> Unit,
 	onPlay: (CkDownloadEntity) -> Unit
 ) {
 	val dialogDelete = remember {
+		mutableStateOf(false)
+	}
+
+	val dialogChooseFormat = remember {
 		mutableStateOf(false)
 	}
 
@@ -56,7 +60,9 @@ fun HomeScreen(
 				modifier = Modifier.fillMaxWidth(),
 				title = { Text(text = "Home") },
 				actions = {
-					IconButton(onClick = onDownload) {
+					IconButton(onClick = {
+						dialogChooseFormat.value = true
+					}) {
 						Icon(
 							painter = painterResource(id = R.drawable.baseline_download_24),
 							contentDescription = null
@@ -84,6 +90,36 @@ fun HomeScreen(
 					)
 				}
 			}
+		}
+
+		if (dialogChooseFormat.value) {
+			AlertDialog(
+				title = {
+					Text(text = "Video Format")
+				},
+				text = {
+					Text(text = "Choose video format, with content length or without")
+				},
+				onDismissRequest = {
+					dialogChooseFormat.value = false
+				},
+				confirmButton = {
+					Button(onClick = {
+						onDownload(true)
+						dialogChooseFormat.value = false
+					}) {
+						Text(text = "Video with Content Length")
+					}
+				},
+				dismissButton = {
+					Button(onClick = {
+						onDownload(false)
+						dialogChooseFormat.value = false
+					}) {
+						Text(text = "Video without Content Length")
+					}
+				}
+			)
 		}
 
 		if (dialogDelete.value) {
