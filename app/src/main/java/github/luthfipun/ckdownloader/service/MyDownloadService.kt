@@ -10,7 +10,6 @@ import github.luthfipun.ck_downloader_core.core.CkDownloadNotificationHelper
 import github.luthfipun.ck_downloader_core.service.CkDownloadService
 import okhttp3.OkHttpClient
 import javax.inject.Inject
-import javax.inject.Named
 
 @AndroidEntryPoint
 class MyDownloadService: CkDownloadService() {
