@@ -1,6 +1,14 @@
 package github.luthfipun.ckdownloader.view.screen
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
@@ -36,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import github.luthfipun.ck_downloader_core.db.entity.CkDownloadEntity
 import github.luthfipun.ck_downloader_core.util.CkDownloadState
 import github.luthfipun.ckdownloader.R
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,14 +93,17 @@ fun HomeScreen(
 				contentPadding = PaddingValues(8.dp)
 			) {
 				items(items = entities, key = { it.uniqueId }) { value ->
-					DownloadItemView(
-						entity = value,
-						onPlay = onPlay,
-						onDelete = { selected ->
-							selectedDelete.value = selected
+					SwipeToDeleteItem(
+						onDelete = {
+							selectedDelete.value = value
 							dialogDelete.value = true
 						}
-					)
+					) {
+						DownloadItemView(
+							entity = value,
+							onPlay = onPlay
+						)
+					}
 				}
 			}
 		}
@@ -128,7 +141,16 @@ fun HomeScreen(
 		if (dialogDelete.value) {
 			AlertDialog(
 				title = { Text(text = "Delete Video!") },
-				text = { Text(text = "Are you sure to delete this video?") },
+				text = {
+					val selected = selectedDelete.value
+					Text(
+						text = if (selected?.state == CkDownloadState.STATE_DOWNLOADING.name) {
+							"This download is still running. Stop and delete it?"
+						} else {
+							"Are you sure to delete this video?"
+						}
+					)
+				},
 				onDismissRequest = {
 					selectedDelete.value = null
 					dialogDelete.value = false
@@ -158,8 +180,7 @@ fun HomeScreen(
 @Composable
 fun DownloadItemView(
 	entity: CkDownloadEntity,
-	onPlay: (CkDownloadEntity) -> Unit,
-	onDelete: (CkDownloadEntity) -> Unit
+	onPlay: (CkDownloadEntity) -> Unit
 ) {
 	val progress = remember(entity.progress) {
         mutableIntStateOf(entity.progress)
@@ -171,14 +192,8 @@ fun DownloadItemView(
 
 	Card(modifier = Modifier
 		.fillMaxWidth()
-		.clickable {
-			when (CkDownloadState.valueOf(state.value)) {
-				CkDownloadState.STATE_DOWNLOADING, CkDownloadState.STATE_ERROR -> onDelete(
-					entity
-				)
-
-				CkDownloadState.STATE_DONE -> onPlay(entity)
-			}
+		.clickable(enabled = state.value == CkDownloadState.STATE_DONE.name) {
+			onPlay(entity)
 		}
 	) {
 		Row(
@@ -208,7 +223,7 @@ fun DownloadItemView(
 			) {
 				Text(text = entity.uniqueId)
 				if (CkDownloadState.valueOf(state.value) == CkDownloadState.STATE_DOWNLOADING) {
-					if (entity.contentLength > 0) {
+					if (entity.contentLength > 0 || progress.intValue > 0) {
 						LinearProgressIndicator(
 							progress = { progress.intValue.toFloat().div(100f) },
 							modifier = Modifier.fillMaxWidth(),
@@ -233,10 +248,47 @@ fun DownloadItemView(
 						}
 					)
 					if (CkDownloadState.valueOf(state.value) == CkDownloadState.STATE_DOWNLOADING) {
-						Text(text = if (entity.contentLength > 0) "${progress.intValue}%" else "${progress.intValue}MB")
+						Text(text = "${progress.intValue}%")
 					}
 				}
 			}
 		}
+	}
+}
+/** Swiping from end to start asks for deletion, the item snaps back so the dialog can be cancelled. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeToDeleteItem(
+	onDelete: () -> Unit,
+	content: @Composable () -> Unit
+) {
+	val swipeState = rememberSwipeToDismissBoxState()
+	val scope = rememberCoroutineScope()
+
+	SwipeToDismissBox(
+		state = swipeState,
+		enableDismissFromStartToEnd = false,
+		onDismiss = {
+			onDelete()
+			scope.launch { swipeState.reset() }
+		},
+		backgroundContent = {
+			Box(
+				modifier = Modifier
+					.fillMaxSize()
+					.clip(CardDefaults.shape)
+					.background(MaterialTheme.colorScheme.errorContainer)
+					.padding(horizontal = 16.dp),
+				contentAlignment = Alignment.CenterEnd
+			) {
+				Icon(
+					imageVector = Icons.Filled.Delete,
+					contentDescription = "Delete",
+					tint = MaterialTheme.colorScheme.onErrorContainer
+				)
+			}
+		}
+	) {
+		content()
 	}
 }

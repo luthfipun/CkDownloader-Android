@@ -2,6 +2,7 @@ package github.luthfipun.ckdownloader.view
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -15,13 +16,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import dagger.hilt.android.AndroidEntryPoint
 import github.luthfipun.ckdownloader.ui.theme.CkDownloaderTheme
 import github.luthfipun.ckdownloader.view.screen.HomeScreen
 import github.luthfipun.ckdownloader.view.screen.HomeViewModel
+import github.luthfipun.ckdownloader.view.screen.PlayerScreen
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -70,13 +74,19 @@ class MainActivity : ComponentActivity() {
 								onDownload = homeViewModel::startDownload,
 								onDelete = homeViewModel::stopDownload,
 								onPlay = {
-									navController.navigate("player")
+									navController.navigate("player?path=${Uri.encode(it.filePath)}")
 								}
 							)
 						}
 
-						composable(route = "player") {
-
+						composable(
+							route = "player?path={path}",
+							arguments = listOf(navArgument("path") { type = NavType.StringType })
+						) { backStackEntry ->
+							PlayerScreen(
+								filePath = backStackEntry.arguments?.getString("path").orEmpty(),
+								onBack = { navController.popBackStack() }
+							)
 						}
 					}
 				}
