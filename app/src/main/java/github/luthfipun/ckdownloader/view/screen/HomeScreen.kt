@@ -19,15 +19,18 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import github.luthfipun.ck_downloader_core.db.entity.CkDownloadEntity
@@ -159,7 +162,7 @@ fun DownloadItemView(
 	onDelete: (CkDownloadEntity) -> Unit
 ) {
 	val progress = remember(entity.progress) {
-		mutableStateOf(entity.progress)
+        mutableIntStateOf(entity.progress)
 	}
 
 	val state = remember(entity.state) {
@@ -207,9 +210,11 @@ fun DownloadItemView(
 				if (CkDownloadState.valueOf(state.value) == CkDownloadState.STATE_DOWNLOADING) {
 					if (entity.contentLength > 0) {
 						LinearProgressIndicator(
-							progress = progress.value.toFloat().div(100f),
+							progress = { progress.intValue.toFloat().div(100f) },
 							modifier = Modifier.fillMaxWidth(),
-							trackColor = ProgressIndicatorDefaults.linearColor.copy(0.3f)
+							color = MaterialTheme.colorScheme.primary,
+							trackColor = ProgressIndicatorDefaults.linearColor.copy(0.3f),
+							strokeCap = StrokeCap.Round,
 						)
 					}else {
 						LinearProgressIndicator()
@@ -228,7 +233,7 @@ fun DownloadItemView(
 						}
 					)
 					if (CkDownloadState.valueOf(state.value) == CkDownloadState.STATE_DOWNLOADING) {
-						Text(text = if (entity.contentLength > 0) "${progress.value}%" else "${progress.value}MB")
+						Text(text = if (entity.contentLength > 0) "${progress.intValue}%" else "${progress.intValue}MB")
 					}
 				}
 			}
