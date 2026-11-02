@@ -24,6 +24,9 @@ interface CkDownloadDao {
 	@Query("UPDATE ck_download SET state = :state WHERE unique_id = :uniqueId")
 	suspend fun updateState(uniqueId: String, state: String)
 
+	@Query("UPDATE ck_download SET state = :newState WHERE unique_id = :uniqueId AND state = :currentState")
+	suspend fun updateStateIfCurrent(uniqueId: String, currentState: String, newState: String)
+
 	@Query("UPDATE ck_download SET progress = :progress WHERE unique_id = :uniqueId")
 	suspend fun updateProgress(uniqueId: String, progress: Int)
 

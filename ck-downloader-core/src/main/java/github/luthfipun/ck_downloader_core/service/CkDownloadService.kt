@@ -14,19 +14,23 @@ import androidx.core.app.NotificationManagerCompat
 import github.luthfipun.ck_downloader_core.core.CkDownloadManager
 import github.luthfipun.ck_downloader_core.util.CkDownloadAction
 import github.luthfipun.ck_downloader_core.util.CkDownloadState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
 import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 abstract class CkDownloadService : Service() {
 
@@ -35,7 +39,17 @@ abstract class CkDownloadService : Service() {
 	private var notificationManager: NotificationManagerCompat? = null
 	private var notificationBuilder: NotificationCompat.Builder? = null
 
-	private val jobDownloads = mutableMapOf<String, Job>()
+	private val exceptionHandler = CoroutineExceptionHandler { _, e ->
+		Log.e(CkDownloadService::class.java.name, e.message.orEmpty(), e)
+	}
+	private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
+
+	private val jobDownloads = ConcurrentHashMap<String, Job>()
+	private val activeCalls = ConcurrentHashMap<String, Call>()
+	private val downloadSemaphore by lazy { Semaphore(getMaxParallelDownloads().coerceAtLeast(1)) }
+
+	@Volatile
+	private var lastStartId = 0
 
 	companion object {
 		const val PARAM_STATE = "PARAM_STATE"
@@ -44,11 +58,18 @@ abstract class CkDownloadService : Service() {
 		const val PARAM_URL = "PARAM_URL"
 		const val PARAM_LENGTH = "PARAM_LENGTH"
 		private const val NOTIFICATION_ID = 2024
+		private const val DEFAULT_MAX_PARALLEL_DOWNLOADS = 3
 	}
 
 	protected abstract fun getCkDownloadManager(): CkDownloadManager
 	protected abstract fun getOkHttpClient(): OkHttpClient
 	protected abstract fun buildNotification(): Pair<NotificationCompat.Builder, NotificationManagerCompat>
+
+	/** Downloads beyond this limit wait in queue until a running one finishes. */
+	protected open fun getMaxParallelDownloads(): Int = DEFAULT_MAX_PARALLEL_DOWNLOADS
+
+	/** How many times a failed chunk is requested again, with exponential backoff, before the download fails. */
+	protected open fun getMaxRetryPerChunk(): Int = CkChunkDownloader.DEFAULT_MAX_RETRY_PER_CHUNK
 
 	override fun onCreate() {
 		super.onCreate()
@@ -57,6 +78,11 @@ abstract class CkDownloadService : Service() {
 		val (builder, managerCompat) = buildNotification()
 		notificationBuilder = builder
 		notificationManager = managerCompat
+		startForegroundCompat()
+		observeProgressFlow(manager, notificationManager, notificationBuilder)
+	}
+
+	private fun startForegroundCompat() {
 		notificationBuilder?.build()?.let {
 			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
 				startForeground(NOTIFICATION_ID, it, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -64,7 +90,6 @@ abstract class CkDownloadService : Service() {
 				startForeground(NOTIFICATION_ID, it)
 			}
 		}
-		observeProgressFlow(manager, notificationManager, notificationBuilder)
 	}
 
 	private fun observeProgressFlow(
@@ -72,17 +97,11 @@ abstract class CkDownloadService : Service() {
 		notificationManager: NotificationManagerCompat?,
 		notificationBuilder: NotificationCompat.Builder?
 	) {
-		CoroutineScope(Dispatchers.IO).launch {
+		serviceScope.launch {
 			try {
 				manager?.getTotalProgress()?.collect { progress ->
 					if (progress == null) {
-						if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-							stopForeground(STOP_FOREGROUND_REMOVE)
-						} else {
-							@Suppress("DEPRECATION")
-							stopForeground(true)
-						}
-						stopSelf()
+						stopIfIdle(manager)
 						return@collect
 					}
 					withContext(Dispatchers.Main) {
@@ -99,225 +118,172 @@ abstract class CkDownloadService : Service() {
 						}
 					}
 				}
+			} catch (e: CancellationException) {
+				throw e
 			} catch (e: Exception) {
 				Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
 			}
 		}
 	}
 
+	/**
+	 * The emitted "no downloads" value may be stale when a new download was just added,
+	 * so re-check the database and only stop if no newer start command has arrived since.
+	 */
+	private suspend fun stopIfIdle(manager: CkDownloadManager) {
+		val startIdAtCheck = lastStartId
+		if (manager.getProgress().isNotEmpty()) return
+		withContext(Dispatchers.Main) {
+			if (stopSelfResult(startIdAtCheck)) {
+				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+					stopForeground(STOP_FOREGROUND_REMOVE)
+				} else {
+					@Suppress("DEPRECATION")
+					stopForeground(true)
+				}
+			}
+		}
+	}
+
 	override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+		lastStartId = startId
+		// Every startForegroundService() call must be followed by startForeground(),
+		// including when the service is still alive after stopForeground()
+		startForegroundCompat()
+
+		// Commands that don't start a download may never change the database,
+		// so check here whether the service still has work to do
+		if (!handleCommand(intent)) {
+			serviceScope.launch { manager?.let { stopIfIdle(it) } }
+		}
+		return START_NOT_STICKY
+	}
+
+	/** Returns true when a download job was launched. */
+	private fun handleCommand(intent: Intent?): Boolean {
 		val state = intent?.getStringExtra(PARAM_STATE).orEmpty()
 		val uniqueId = intent?.getStringExtra(PARAM_ID).orEmpty()
 		val filePath = intent?.getStringExtra(PARAM_PATH).orEmpty()
 		val url = intent?.getStringExtra(PARAM_URL).orEmpty()
 		val contentLength = intent?.getLongExtra(PARAM_LENGTH, 0L) ?: 0L
 
-		if (state.isEmpty()) {
-			return START_NOT_STICKY
-		}
+		val action = CkDownloadAction.entries.firstOrNull { it.name == state }
+			?: return false
 
-		if (CkDownloadAction.valueOf(state) == CkDownloadAction.ACTION_STOP_ALL) {
-			jobDownloads.values.forEach { it.cancel() }
-			jobDownloads.clear()
-			return START_NOT_STICKY
+		if (action == CkDownloadAction.ACTION_STOP_ALL) {
+			jobDownloads.keys.toList().forEach { stopJob(it) }
+			return false
 		}
 
 		if (uniqueId.isEmpty() || filePath.isEmpty()) {
-			return START_NOT_STICKY
+			return false
 		}
 
-		if (CkDownloadAction.valueOf(state) == CkDownloadAction.ACTION_STOP) {
-			jobDownloads[uniqueId]?.cancel("STOP_JOB")
-			return START_NOT_STICKY
+		if (action == CkDownloadAction.ACTION_STOP) {
+			stopJob(uniqueId)
+			return false
 		}
 
 		if (url.isEmpty()) {
-			CoroutineScope(Dispatchers.IO).launch { onError(uniqueId) }
-			return START_NOT_STICKY
+			serviceScope.launch { onError(uniqueId) }
+			return false
 		}
 
-		try {
-			if (File(filePath).exists()) {
-				File(filePath).delete()
-			}
-		} catch (e: Exception) {
-			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
+		if (jobDownloads[uniqueId]?.isActive == true) {
+			return false
 		}
 
 		val outputFile = File(filePath)
+		deleteFile(outputFile)
 
-		if (contentLength > 0) {
-			jobDownloadWithContentLength(
-				uniqueId = uniqueId,
-				filePath = filePath,
-				url = url,
-				contentLength = contentLength,
-				outputFile = outputFile
-			)
-		}else {
-			jobDownloadWithoutContentLength(
-				uniqueId = uniqueId,
-				filePath = filePath,
-				url = url,
-				outputFile = outputFile
-			)
-		}
-
-		return START_NOT_STICKY
-	}
-
-	private fun jobDownloadWithoutContentLength(
-		uniqueId: String,
-		filePath: String,
-		url: String,
-		outputFile: File
-	) {
-		jobDownloads[uniqueId] = CoroutineScope(Dispatchers.IO).launch {
-			try {
-				val client = okhttp ?: throw Exception("Please implement okhttp client!")
-				val chunkSize = downloadMaxChunkLength(30_000_000)
-				var pos = outputFile.length()
-				var done = false
-
-				while (!done && isActive) {
-					val end = pos + chunkSize - 1L
-					val rangeVal = "bytes=$pos-$end"
-					val resp = requestRange(client, url, rangeVal)
-
-					resp?.use { r ->
-						val body = r.body
-						when (r.code) {
-							206 -> {
-								if (body != null) {
-									saveChunkToFile(body.byteStream(), outputFile)
-									if (body.contentLength() < chunkSize) done = true
-									pos += body.contentLength()
-									try {
-										manager?.updateProgress(uniqueId, (pos.div(1000_000).toDouble().toInt()))
-									} catch (e: Exception) {
-										Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
-									}
-								}else {
-									done = true
-								}
-							}
-							200 -> {
-								if (body != null) {
-									saveChunkToFile(body.byteStream(), outputFile)
-								}else {
-									done = true
-								}
-							}
-							else -> {
-								done = true
-								if (File(filePath).exists()) {
-									File(filePath).delete()
-								}
-								onError(uniqueId)
-							}
-						}
-					}
-				}
-
-				if (File(filePath).exists()) onSuccess(uniqueId)
-			} catch (e: IOException) {
-				Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
-				if (e.message == "STOP_JOB") {
-					if (File(filePath).exists()) {
-						File(filePath).delete()
-					}
-				} else {
-					onError(uniqueId)
+		jobDownloads[uniqueId] = serviceScope.launch {
+			runDownloadJob(uniqueId, outputFile) {
+				downloadSemaphore.withPermit {
+					downloadInChunks(uniqueId, url, contentLength, outputFile)
 				}
 			}
 		}
+
+		return true
 	}
 
-	private fun jobDownloadWithContentLength(
+	/**
+	 * Runs [download] and maps its outcome to the download state.
+	 * [download] returns true when the file is complete, false on a server error.
+	 */
+	private suspend fun runDownloadJob(
 		uniqueId: String,
-		filePath: String,
+		outputFile: File,
+		download: suspend () -> Boolean
+	) {
+		val job = currentCoroutineContext()[Job]
+		try {
+			if (download()) {
+				onSuccess(uniqueId)
+			} else {
+				deleteFile(outputFile)
+				onError(uniqueId)
+			}
+		} catch (e: CancellationException) {
+			deleteFile(outputFile)
+			throw e
+		} catch (e: Exception) {
+			deleteFile(outputFile)
+			// Cancelling the OkHttp call on stop surfaces as an IOException, not an error
+			if (currentCoroutineContext().isActive) {
+				Log.e(CkDownloadService::class.java.name, e.message.orEmpty(), e)
+				onError(uniqueId)
+			}
+		} finally {
+			activeCalls.remove(uniqueId)
+			if (job != null) jobDownloads.remove(uniqueId, job)
+		}
+	}
+
+	/** Returns true when the file is complete, false when it failed after retries. */
+	private suspend fun downloadInChunks(
+		uniqueId: String,
 		url: String,
 		contentLength: Long,
 		outputFile: File
-	) {
-		jobDownloads[uniqueId] = CoroutineScope(Dispatchers.IO).launch {
-			try {
-				val client = okhttp ?: throw Exception("Please implement okhttp client!")
-				val chunkSize = downloadMaxChunkLength(contentLength)
-				var startByte = 0L
-				var endByte = chunkSize - 1L
-				var done = false
-
-				while (startByte < contentLength && isActive && !done) {
-					val response = requestRange(client, url, "bytes=$startByte-$endByte")
-					response?.use { r ->
-						val body = r.body
-						when(r.code) {
-							206 -> {
-								if (body != null) {
-									saveChunkToFile(body.byteStream(), outputFile)
-									startByte = endByte + 1L
-									endByte += chunkSize
-
-									if (endByte >= contentLength) {
-										endByte = contentLength - 1
-									}
-
-									val progress = (endByte.times(100)).div(contentLength).toInt()
-									try {
-										manager?.updateProgress(uniqueId, progress)
-									} catch (e: Exception) {
-										Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
-									}
-								} else {
-									done = true
-								}
-							}
-							200 -> {
-								if (body != null) {
-									saveChunkToFile(body.byteStream(), outputFile)
-								} else {
-									done = true
-								}
-							}
-							else -> {
-								done = true
-								if (File(filePath).exists()) {
-									File(filePath).delete()
-								}
-								onError(uniqueId)
-							}
-						}
-					}
-				}
-
-				if (File(filePath).exists()) onSuccess(uniqueId)
-			} catch (e: IOException) {
-				Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
-				if (e.message == "STOP_JOB") {
-					if (File(filePath).exists()) {
-						File(filePath).delete()
-					}
-				} else {
-					onError(uniqueId)
-				}
+	): Boolean {
+		val client = okhttp ?: throw IllegalStateException("Please implement okhttp client!")
+		val downloader = CkChunkDownloader(
+			client = client,
+			maxRetryPerChunk = getMaxRetryPerChunk().coerceAtLeast(0),
+			onCallCreated = { activeCalls[uniqueId] = it },
+			onProgress = { updateProgress(uniqueId, it) }
+		)
+		return when (val result = downloader.download(url, contentLength, outputFile)) {
+			CkChunkDownloader.Result.Success -> true
+			is CkChunkDownloader.Result.Failed -> {
+				Log.e(CkDownloadService::class.java.name, "Download $uniqueId failed: ${result.reason}")
+				false
 			}
 		}
 	}
 
-	private fun requestRange(okhttp: OkHttpClient, url: String, range: String): Response? {
-		val req = Request.Builder()
-			.url(url)
-			.header("Range", range)
-			.build()
-		return okhttp.newCall(req).execute()
+	private fun stopJob(uniqueId: String) {
+		jobDownloads[uniqueId]?.cancel()
+		// execute() and stream reads are blocking, cancelling the call aborts them
+		activeCalls[uniqueId]?.cancel()
+	}
+
+	private suspend fun updateProgress(uniqueId: String, progress: Int) {
+		try {
+			manager?.updateProgress(uniqueId, progress)
+		} catch (e: CancellationException) {
+			throw e
+		} catch (e: Exception) {
+			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
+		}
 	}
 
 	private suspend fun onError(uniqueId: String) {
 		try {
-			manager?.updateState(uniqueId, CkDownloadState.STATE_ERROR).also {
-				jobDownloads[uniqueId]?.cancel()
-			}
+			manager?.updateState(uniqueId, CkDownloadState.STATE_ERROR)
+		} catch (e: CancellationException) {
+			throw e
 		} catch (e: Exception) {
 			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
 		}
@@ -325,8 +291,18 @@ abstract class CkDownloadService : Service() {
 
 	private suspend fun onSuccess(uniqueId: String) {
 		try {
-			manager?.updateState(uniqueId, CkDownloadState.STATE_DONE).also {
-				jobDownloads[uniqueId]?.cancel()
+			manager?.updateState(uniqueId, CkDownloadState.STATE_DONE)
+		} catch (e: CancellationException) {
+			throw e
+		} catch (e: Exception) {
+			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
+		}
+	}
+
+	private fun deleteFile(file: File) {
+		try {
+			if (file.exists()) {
+				file.delete()
 			}
 		} catch (e: Exception) {
 			Log.e(CkDownloadService::class.java.name, e.message.orEmpty())
@@ -337,39 +313,21 @@ abstract class CkDownloadService : Service() {
 		return null
 	}
 
-	private fun downloadMaxChunkLength(contentLength: Long): Long {
-		val m = (1000.times(1000)).toLong()
-		return when {
-			contentLength <= 50.times(m) -> 2.times(m)
-			contentLength <= 100.times(m) -> 4.times(m)
-			contentLength <= 500.times(m) -> 5.times(m)
-			else -> 8.times(m)
-		}
-	}
-
-	private fun saveChunkToFile(inputStream: java.io.InputStream, outputFile: File) {
-		val buffer = ByteArray(8192)
-		val outputStream = FileOutputStream(outputFile, true)
-		try {
-			var bytesRead: Int
-			while (inputStream.read(buffer).also { bytesRead = it } != - 1) {
-				outputStream.write(buffer, 0, bytesRead)
-			}
-			outputStream.flush()
-		} catch (e: IOException) {
-			e.printStackTrace()
-		} finally {
-			try {
-				outputStream.close()
-			} catch (e: IOException) {
-				e.printStackTrace()
-			}
-		}
-	}
-
 	override fun onDestroy() {
 		super.onDestroy()
-		jobDownloads.values.forEach { it.cancel() }
+		val interrupted = jobDownloads.keys.toList()
+		activeCalls.values.forEach { it.cancel() }
+		activeCalls.clear()
 		jobDownloads.clear()
+		serviceScope.cancel()
+
+		// serviceScope is gone, use a short-lived scope so cut-off downloads
+		// don't stay in STATE_DOWNLOADING and can be retried
+		val manager = manager ?: return
+		if (interrupted.isNotEmpty()) {
+			CoroutineScope(Dispatchers.IO + exceptionHandler).launch {
+				interrupted.forEach { manager.markInterrupted(it) }
+			}
+		}
 	}
 }
