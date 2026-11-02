@@ -1,0 +1,7 @@
+# Publish only the library's own "release" publication. Without this, JitPack's default
+# Gradle 9 flow adds a second publication of the same AAR, and consumers of
+# com.github.luthfipun:CkDownloader-Android get duplicate classes.
+jdk:
+  - openjdk17
+install:
+  - ./gradlew :ck-downloader-core:publishReleasePublicationToMavenLocal -Pgroup=com.github.luthfipun -Pversion=$VERSION
